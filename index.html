@@ -282,9 +282,9 @@
         };
 
         async function fetchExternalMetadata() {
-            updateStatus("外部メタデータ(Mini Tokyo 3D等)を取得中...");
+            updateStatus("外部メタデータ(Wikidata等)を取得中...");
             try {
-                // 1. Fetch Colors from Mini Tokyo 3D
+                // 1. Fetch Colors from Mini Tokyo 3D (High quality for Tokyo)
                 const colorRes = await fetch('https://raw.githubusercontent.com/nagix/mini-tokyo-3d/master/data/railways.json');
                 const colorData = await colorRes.json();
 
@@ -292,33 +292,74 @@
                 const logoRes = await fetch('https://raw.githubusercontent.com/piuccio/open-data-jp-railway-lines/master/lines.json');
                 const logoData = await logoRes.json();
 
-                // 3. Build Lookup Map
-                // Key: Japanese Line Name (normalized) -> Value: { color, logo }
+                // 3. Fetch Nationwide Data from Wikidata (SPARQL)
+                // Gets line colors (P465) and logos (P154) for Japanese railways
+                const sparqlQuery = `
+                    SELECT DISTINCT ?lineLabel ?hexColor ?logo WHERE {
+                      ?line wdt:P31/wdt:P279* wd:Q1142127;
+                            wdt:P17 wd:Q17.
+                      OPTIONAL { ?line wdt:P465 ?hexColor. }
+                      OPTIONAL { ?line wdt:P154 ?logo. }
+                      SERVICE wikibase:label { bd:serviceParam wikibase:language "ja,en". }
+                    }
+                    LIMIT 5000
+                `;
+                const wikidataUrl = `https://query.wikidata.org/sparql?query=${encodeURIComponent(sparqlQuery)}&format=json`;
                 
-                // Process Colors
-                colorData.forEach(line => {
-                    if (line.title && line.title.ja) {
-                        const name = line.title.ja;
-                        if (!externalLineData[name]) externalLineData[name] = {};
-                        externalLineData[name].color = line.color;
-                        // Try to guess company from ID (e.g. "JR-East" -> "JR東日本")
-                        if (line.id.includes("JR-East")) externalLineData[name].company = "JR東日本";
-                        else if (line.id.includes("TokyoMetro")) externalLineData[name].company = "東京メトロ";
-                        else if (line.id.includes("Toei")) externalLineData[name].company = "都営地下鉄";
+                let wikidataItems = [];
+                try {
+                    const wdRes = await fetch(wikidataUrl, { headers: { 'Accept': 'application/sparql-results+json' } });
+                    if (wdRes.ok) {
+                        const wdJson = await wdRes.json();
+                        wikidataItems = wdJson.results.bindings;
+                        console.log(`Wikidata loaded: ${wikidataItems.length} items`);
+                    }
+                } catch (e) {
+                    console.warn("Wikidata fetch failed", e);
+                }
+
+                // 4. Build Lookup Map
+                // Priority: Mini Tokyo 3D > Wikidata > Open Data JP
+                
+                // Helper to normalize names for matching
+                const normalize = (name) => name.replace(/^JR/, '').replace(/線$/, '').replace(/[（\(].*?[）\)]/g, '').trim();
+
+                // Process Wikidata (Base Layer)
+                wikidataItems.forEach(item => {
+                    const name = item.lineLabel.value;
+                    const normName = normalize(name);
+                    
+                    if (!externalLineData[normName]) externalLineData[normName] = {};
+                    
+                    if (item.hexColor) {
+                        externalLineData[normName].color = '#' + item.hexColor.value;
+                    }
+                    if (item.logo) {
+                        externalLineData[normName].logo = item.logo.value;
                     }
                 });
 
-                // Process Logos
+                // Process Open Data JP (Middle Layer)
                 logoData.forEach(line => {
-                    // This dataset uses "code" like "JR-East.Yamanote" similar to Mini Tokyo 3D
-                    // But we need to match by name or ID if possible.
-                    // Let's try to match by ID first if we can infer it, or just use the name if available.
-                    // The dataset has "name_ja".
                     if (line.name_ja) {
-                        const name = line.name_ja;
-                        if (!externalLineData[name]) externalLineData[name] = {};
-                        if (line.logo) externalLineData[name].logo = line.logo;
-                        if (line.station_size) externalLineData[name].logoText = line.code.split('.').pop().substring(0, 2).toUpperCase(); // Fallback text
+                        const normName = normalize(line.name_ja);
+                        if (!externalLineData[normName]) externalLineData[normName] = {};
+                        if (line.logo) externalLineData[normName].logo = line.logo;
+                    }
+                });
+
+                // Process Mini Tokyo 3D (Top Layer - Best Colors for Tokyo)
+                colorData.forEach(line => {
+                    if (line.title && line.title.ja) {
+                        const name = line.title.ja;
+                        const normName = normalize(name);
+                        
+                        if (!externalLineData[normName]) externalLineData[normName] = {};
+                        externalLineData[normName].color = line.color;
+                        
+                        if (line.id.includes("JR-East")) externalLineData[normName].company = "JR東日本";
+                        else if (line.id.includes("TokyoMetro")) externalLineData[normName].company = "東京メトロ";
+                        else if (line.id.includes("Toei")) externalLineData[normName].company = "都営地下鉄";
                     }
                 });
 
@@ -779,21 +820,21 @@
 
         // --- Helpers ---
         function getLineColor(name) {
-            // 1. Try External Data (Exact Match)
-            // Ekidata names often have "JR" prefix or "線" suffix.
-            // Mini Tokyo 3D names are usually clean (e.g. "山手線").
+            // Normalize input name for matching
+            const normalize = (n) => n.replace(/^JR/, '').replace(/線$/, '').replace(/[（\(].*?[）\)]/g, '').trim();
+            const normName = normalize(name);
             
-            // Normalize input name: Remove "JR" prefix for matching
-            const cleanName = name.replace(/^JR/, '');
-            
-            if (externalLineData[cleanName] && externalLineData[cleanName].color) {
-                return externalLineData[cleanName].color;
+            // 1. Try Normalized Match
+            if (externalLineData[normName] && externalLineData[normName].color) {
+                return externalLineData[normName].color;
             }
+            
+            // 2. Try Exact Match (Fallback)
             if (externalLineData[name] && externalLineData[name].color) {
                 return externalLineData[name].color;
             }
 
-            // 2. Fallback Heuristics (Generic)
+            // 3. Fallback Heuristics (Generic)
             if (name.includes("JR")) return "#2ecc71"; // Generic JR Green
             if (name.includes("地下鉄") || name.includes("メトロ")) return "#999"; // Generic Subway Gray
             if (name.includes("新幹線")) return "#1E3586"; // Generic Shinkansen Blue
