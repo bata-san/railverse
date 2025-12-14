@@ -593,8 +593,12 @@
                 });
 
                 if (rawPath.length > 1) {
-                    // Narita Express path is inaccurate due to sparse stops; hide the line string
-                    if (lineName.includes("成田エクスプレス")) {
+                    // Hide schematic lines for long-distance trains or sparse stops to avoid "straight line" artifacts
+                    // These will be covered by Overpass (Real Tracks)
+                    if (lineName.includes("成田エクスプレス") || 
+                        lineName.includes("新幹線") || 
+                        lineName.includes("特急") || 
+                        lineName.includes("ライナー")) {
                         return features;
                     }
 
