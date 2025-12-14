@@ -598,21 +598,44 @@
                     if (lineName.includes("成田エクスプレス") || 
                         lineName.includes("新幹線") || 
                         lineName.includes("特急") || 
-                        lineName.includes("ライナー") ||
-                        lineName === "JR成田線") {
+                        lineName.includes("ライナー")) {
                         return features;
                     }
 
-                    const smoothedPath = getCatmullRomSpline(rawPath, 4);
-                    features.push({
-                        type: 'Feature',
-                        geometry: { type: 'LineString', coordinates: smoothedPath },
-                        properties: {
-                            type: isSubway ? 'subway' : 'ground',
-                            color: color,
-                            lineCd: lineCd,
-                            lineName: lineName
+                    // Split path into segments based on distance to prevent "jumps" (e.g. complex branching lines like JR Narita Line)
+                    const segments = [];
+                    let currentSegment = [rawPath[0]];
+                    const DISTANCE_THRESHOLD_KM = 15; // Break line if stations are > 15km apart
+
+                    for (let i = 1; i < rawPath.length; i++) {
+                        const prev = rawPath[i-1];
+                        const curr = rawPath[i];
+                        const dist = getDistanceKm(prev[1], prev[0], curr[1], curr[0]);
+
+                        if (dist > DISTANCE_THRESHOLD_KM) {
+                            // End current segment
+                            if (currentSegment.length > 1) segments.push(currentSegment);
+                            // Start new segment
+                            currentSegment = [curr];
+                        } else {
+                            currentSegment.push(curr);
                         }
+                    }
+                    if (currentSegment.length > 1) segments.push(currentSegment);
+
+                    // Generate Splines for each segment
+                    segments.forEach(seg => {
+                        const smoothedPath = getCatmullRomSpline(seg, 4);
+                        features.push({
+                            type: 'Feature',
+                            geometry: { type: 'LineString', coordinates: smoothedPath },
+                            properties: {
+                                type: isSubway ? 'subway' : 'ground',
+                                color: color,
+                                lineCd: lineCd,
+                                lineName: lineName
+                            }
+                        });
                     });
                 }
                 return features;
@@ -775,6 +798,23 @@
             if (name.includes("地下鉄") || name.includes("メトロ")) return "#999"; // Generic Subway Gray
             if (name.includes("新幹線")) return "#1E3586"; // Generic Shinkansen Blue
             return "#ccc"; // Default Gray
+        }
+
+        function getDistanceKm(lat1, lon1, lat2, lon2) {
+            const R = 6371; // Radius of the earth in km
+            const dLat = deg2rad(lat2 - lat1);
+            const dLon = deg2rad(lon2 - lon1);
+            const a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+                Math.sin(dLon/2) * Math.sin(dLon/2); 
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+            const d = R * c; // Distance in km
+            return d;
+        }
+
+        function deg2rad(deg) {
+            return deg * (Math.PI/180);
         }
 
         function getCatmullRomSpline(points, numSegments) {
