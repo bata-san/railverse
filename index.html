@@ -293,13 +293,15 @@
                 const logoData = await logoRes.json();
 
                 // 3. Fetch Nationwide Data from Wikidata (SPARQL)
-                // Gets line colors (P465) and logos (P154) for Japanese railways
+                // Gets line colors (P465), logos (P154), and route numbers (P1671/P1801)
                 const sparqlQuery = `
-                    SELECT DISTINCT ?lineLabel ?hexColor ?logo WHERE {
+                    SELECT DISTINCT ?lineLabel ?hexColor ?logo ?code WHERE {
                       ?line wdt:P31/wdt:P279* wd:Q1142127;
                             wdt:P17 wd:Q17.
                       OPTIONAL { ?line wdt:P465 ?hexColor. }
                       OPTIONAL { ?line wdt:P154 ?logo. }
+                      OPTIONAL { ?line wdt:P1671 ?code. }
+                      OPTIONAL { ?line wdt:P1801 ?code. }
                       SERVICE wikibase:label { bd:serviceParam wikibase:language "ja,en". }
                     }
                     LIMIT 5000
@@ -336,6 +338,9 @@
                     }
                     if (item.logo) {
                         externalLineData[normName].logo = item.logo.value;
+                    }
+                    if (item.code) {
+                        externalLineData[normName].code = item.code.value;
                     }
                 });
 
@@ -790,8 +795,10 @@
                 logoEl.innerHTML = `<img src="${logoUrl}" style="width:100%; height:100%; object-fit:contain;">`;
                 logoEl.style.background = 'transparent'; // Use transparent if image exists
             } else {
-                logoEl.innerHTML = lineName.charAt(0);
-                logoEl.style.background = color;
+                // Generate Fallback Logo
+                const code = meta.code;
+                logoEl.innerHTML = generateFallbackLogoHTML(lineName, color, code);
+                logoEl.style.background = 'transparent'; // Reset background as the generator handles it
             }
             
             // Populate Stations
@@ -929,6 +936,87 @@
                 map.setPaintProperty('stations-labels', 'text-color', '#000');
                 map.setPaintProperty('stations-labels', 'text-halo-color', '#fff');
                 map.setPaintProperty('real-tracks', 'line-color', '#888');
+            }
+        }
+
+        function generateFallbackLogoHTML(lineName, color, code) {
+            // 1. Determine Style (Square for JR/Private, Circle for Subway)
+            const isSubway = lineName.includes("地下鉄") || lineName.includes("メトロ") || lineName.includes("都営");
+            
+            // 2. Determine Text (Code > Initial > Kanji)
+            let text = code;
+            if (!text) {
+                // Try to guess initial from common names if no code provided
+                if (lineName.includes("山手")) text = "JY";
+                else if (lineName.includes("京浜東北")) text = "JK";
+                else if (lineName.includes("中央")) text = "JC";
+                else if (lineName.includes("総武")) text = "JB";
+                else if (lineName.includes("常磐")) text = "JJ";
+                else if (lineName.includes("銀座")) text = "G";
+                else if (lineName.includes("丸ノ内")) text = "M";
+                else if (lineName.includes("日比谷")) text = "H";
+                else if (lineName.includes("東西")) text = "T";
+                else if (lineName.includes("千代田")) text = "C";
+                else if (lineName.includes("有楽町")) text = "Y";
+                else if (lineName.includes("半蔵門")) text = "Z";
+                else if (lineName.includes("南北")) text = "N";
+                else if (lineName.includes("副都心")) text = "F";
+                else if (lineName.includes("新宿")) text = "S";
+                else if (lineName.includes("浅草")) text = "A";
+                else if (lineName.includes("三田")) text = "I";
+                else if (lineName.includes("大江戸")) text = "E";
+                else {
+                    // Fallback to first character (Kanji)
+                    text = lineName.replace(/^JR/, '').charAt(0);
+                }
+            }
+
+            // 3. Generate HTML
+            if (isSubway) {
+                // Circle Style (Tokyo Metro / Toei style)
+                // Outer circle: Color
+                // Inner circle: White
+                // Text: Color or Black
+                return `
+                    <div style="
+                        width: 100%; height: 100%;
+                        background: ${color};
+                        border-radius: 50%;
+                        display: flex; align-items: center; justify-content: center;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                    ">
+                        <div style="
+                            width: 75%; height: 75%;
+                            background: white;
+                            border-radius: 50%;
+                            display: flex; align-items: center; justify-content: center;
+                            color: #333;
+                            font-family: 'Arial', sans-serif;
+                            font-weight: 900;
+                            font-size: 16px;
+                        ">${text}</div>
+                    </div>
+                `;
+            } else {
+                // Square Style (JR style)
+                // Rounded square: Color
+                // Text: White (or Black if color is too light)
+                return `
+                    <div style="
+                        width: 100%; height: 100%;
+                        background: ${color};
+                        border-radius: 6px;
+                        display: flex; align-items: center; justify-content: center;
+                        color: white;
+                        font-family: 'Arial', sans-serif;
+                        font-weight: bold;
+                        font-size: 18px;
+                        text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                    ">
+                        ${text}
+                    </div>
+                `;
             }
         }
 
